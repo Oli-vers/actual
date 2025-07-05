@@ -13,10 +13,19 @@ import {
   SvgDotsHorizontalTriple,
   SvgLockOpen,
 } from '@actual-app/components/icons/v1';
-import { SvgNotesPaper } from '@actual-app/components/icons/v2';
+import { SvgNotesPaper, SvgLockClosed } from '@actual-app/components/icons/v2';
 import { Menu } from '@actual-app/components/menu';
+import { applyChanges } from 'loot-core/shared/util';
 import { Popover } from '@actual-app/components/popover';
+import { q } from 'loot-core/shared/query';
+import {
+  updateTransaction,
+  ungroupTransactions,
+} from 'loot-core/shared/transactions';
+import { type TransactionEntity } from 'loot-core/types/models';
 import { styles } from '@actual-app/components/styles';
+import { send } from 'loot-core/platform/client/fetch';
+import { aqlQuery } from '@desktop-client/queries/aqlQuery';
 import { theme } from '@actual-app/components/theme';
 import { View } from '@actual-app/components/view';
 
@@ -94,6 +103,36 @@ export function AccountMenuModal({
     }
 
     onEditNotes?.(account.id);
+  };
+
+  const lockTransactions = async (close: () => void) => {
+    const { data } = await aqlQuery(
+      q('transactions')
+        .filter({ cleared: true, reconciled: false, account: accountId })
+        .select('*')
+        .options({ splits: 'grouped' }),
+    );
+    let transactions = ungroupTransactions(data);
+
+    const changes: { updated: Array<Partial<TransactionEntity>> } = {
+      updated: [],
+    };
+
+    transactions.forEach(trans => {
+      const { diff } = updateTransaction(transactions, {
+        ...trans,
+        reconciled: true,
+      });
+
+      transactions = applyChanges(diff, transactions);
+
+      changes.updated = changes.updated
+        ? changes.updated.concat(diff.updated)
+        : diff.updated;
+    });
+
+    await send('transactions-batch-update', changes);
+    close();
   };
 
   const buttonStyle: CSSProperties = {
@@ -184,6 +223,17 @@ export function AccountMenuModal({
                 paddingTop: 10,
               }}
             >
+              <Button
+                style={buttonStyle}
+                onPress={() => lockTransactions(close)}
+              >
+                <SvgLockClosed
+                  width={20}
+                  height={20}
+                  style={{ paddingRight: 5 }}
+                />
+                Lock Cleared Transactions
+              </Button>
               <Button style={buttonStyle} onPress={_onEditNotes}>
                 <SvgNotesPaper
                   width={20}
